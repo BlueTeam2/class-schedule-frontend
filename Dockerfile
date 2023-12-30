@@ -25,6 +25,5 @@ ENTRYPOINT [ "npm", "run", "start" ]
 FROM nginx:alpine as frontend-prod
 ARG FRONT_WORK_DIR
 COPY --from=frontend-base ${FRONT_WORK_DIR}/build /usr/share/nginx/html
-COPY ./nginx-templates/* /etc/nginx/templates/
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
