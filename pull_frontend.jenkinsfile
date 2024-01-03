@@ -1,0 +1,79 @@
+def COLOR_MAP = [
+    'SUCCESS': 'good',
+    'FAILURE': 'danger',
+]
+
+pipeline {
+    agent any
+
+    triggers {
+        GenericTrigger (
+            genericHeaderVariables: [
+                [ key: 'X-GitHub-Event' ]
+            ],
+            genericVariables: [
+                [ key: 'BRANCH_SOURCE', value: '$.pull_request.head.ref' ],
+                [ key: 'BRANCH_TARGET', value: '$.pull_request.base.ref' ],
+                [ key: 'COMMITTER', value: '$.pull_request.user.login' ],
+                [ key: 'PULL_REQUEST_STATE', value: '$.pull_request.state' ],
+            ],
+
+            causeString: "Pull Request BY \$COMMITTER FROM '\$BRANCH_SOURCE' TO '\$BRANCH_TARGET'",
+            token: 'pull_frontend',
+            regexpFilterText: '$BRANCH_TARGET : $PULL_REQUEST_STATE',
+            regexpFilterExpression: '^(main) : open$'
+        )
+    }
+
+    environment {
+        FRONTEND_IMAGE_NAME="class-schedule-frontend"
+        FRONTEND_IMAGE_TAG="test-1.0.${BUILD_NUMBER}"
+        FRONTEND_TEST_TARGET="frontend-base"
+    }
+
+    stages {
+        stage('GH Variables') {
+            steps {
+                sh '''
+                    echo "GH merge Branch ${BRANCH_TARGET}"
+                '''
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                git branch: "${BRANCH_TARGET}", credentialsId: 'jenkins-git-class-schedule', url: 'git@github.com:BlueTeam2/class-schedule-frontend.git'
+            }
+        }
+
+        stage('Build test image') {
+            steps {
+                script {
+                    def customImage = docker.build("${FRONTEND_IMAGE_NAME}:${FRONTEND_IMAGE_TAG}", "--target ${FRONTEND_TEST_TARGET} .")
+                }
+            }
+            post {
+                always {
+                    sh "docker rmi -f ${FRONTEND_IMAGE_NAME}:${FRONTEND_IMAGE_TAG}"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Slack Notifications.'
+            slackSend channel: '#jenkinscicd',
+                color: COLOR_MAP[currentBuild.currentResult],
+                message: """
+                    *PR Tests ${currentBuild.currentResult} [Frontend]*\n\n
+                    *By*: ${COMMITTER}\n
+                    *From*: ${BRANCH_SOURCE}\n
+                    *To*: ${BRANCH_TARGET}\n\n
+                    More info at: ${env.BUILD_URL}
+                """.stripIndent()
+
+            cleanWs()
+        }
+    }
+}
