@@ -1,0 +1,78 @@
+def COLOR_MAP = [
+    'SUCCESS': 'good',
+    'FAILURE': 'danger',
+]
+
+pipeline {
+    agent any
+
+    triggers {
+        GenericTrigger (
+            genericHeaderVariables: [
+                [ key: 'X-GitHub-Event' ]
+            ],
+            genericVariables: [
+                [ key: 'BRANCH_TARGET', value: '$.ref', regexpFilter: 'refs/heads/' ],
+            ],
+            token: 'merge_frontend',
+            regexpFilterText: '$BRANCH_TARGET',
+            regexpFilterExpression: '^main$',
+        )
+    }
+
+    environment {
+        FRONTEND_IMAGE_NAME="class-schedule-frontend"
+        FRONTEND_IMAGE_TAG="1.0.${BUILD_NUMBER}"
+        FRONTEND_TARGET="frontend-prod"
+        REPOSITORY_ADDRESS="https://nexus.smaha.top/"
+        BRANCH_TARGET="main"
+    }
+
+    stages {
+        stage('GH Variables') {
+            steps {
+                sh '''
+                    echo "GH merge Branch ${BRANCH_TARGET}"
+                '''
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                git branch: "${BRANCH_TARGET}", credentialsId: 'jenkins-git-class-schedule', url: 'git@github.com:BlueTeam2/class-schedule-frontend.git'
+            }
+        }
+
+        stage('Build production image') {
+            steps {
+                script {
+                    docker.withRegistry("${REPOSITORY_ADDRESS}", 'nexus-admin') {
+                        def customImage = docker.build("${FRONTEND_IMAGE_NAME}:${FRONTEND_IMAGE_TAG}", "--target ${FRONTEND_TARGET} .")
+                        customImage.push()
+                    }
+                }
+            }
+            post {
+                always {
+                    sh "docker rmi -f ${FRONTEND_IMAGE_NAME}:${FRONTEND_IMAGE_TAG}"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Slack Notifications.'
+            slackSend channel: '#jenkinscicd',
+                color: COLOR_MAP[currentBuild.currentResult],
+                message: """
+                    *Build ${currentBuild.currentResult} [Frontend]*\n\n
+                    *Job*: ${env.JOB_NAME}\n
+                    *Build number*: ${env.BUILD_NUMBER}\n
+                    More info at: ${env.BUILD_URL}
+                """.stripIndent()
+
+            cleanWs()
+        }
+    }
+}
